@@ -64,6 +64,14 @@ class NMCore {
     static func registerKeychain() {
         keychain.accessGroup = "C7AS5D38Q8.com.argsment.Nezha-Mobile"
         keychain.synchronizable = true
+
+        let migrationKey = "NMKeychainPasswordAccessMigrated"
+        if !userDefaults.bool(forKey: migrationKey) {
+            if let existing = keychain.get(NMDashboardPassword), !existing.isEmpty {
+                keychain.set(existing, forKey: NMDashboardPassword, withAccess: .accessibleAfterFirstUnlock)
+                userDefaults.set(true, forKey: migrationKey)
+            }
+        }
     }
     
     // Save dashboard configuration
@@ -80,7 +88,8 @@ class NMCore {
         
         syncWithiCloud()
         
-        keychain.set(dashboardPassword, forKey: NMDashboardPassword)
+        keychain.set(dashboardPassword, forKey: NMDashboardPassword, withAccess: .accessibleAfterFirstUnlock)
+        cachedPassword = dashboardPassword
 
         Task { await TokenManager.shared.invalidateToken() }
     }
@@ -156,10 +165,12 @@ class NMCore {
         if let cachedPassword {
             return cachedPassword
         }
-        else {
-            cachedPassword = keychain.get(NMDashboardPassword)
-            return cachedPassword!
+        if let value = keychain.get(NMDashboardPassword) {
+            cachedPassword = value
+            return value
         }
+        _ = debugLog("Keychain read failed for password (OSStatus: \(keychain.lastResultCode))")
+        return ""
     }
     
     static func getIsNezhaDashboardSSLEnabled() -> Bool {
