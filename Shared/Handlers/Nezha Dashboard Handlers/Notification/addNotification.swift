@@ -9,37 +9,26 @@ import Foundation
 
 extension RequestHandler {
     static func addNotification(name: String, pushNotificationsToken: String) async throws -> AddNotificationResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/notification") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
+        let requestBody = """
+        {
+        "iOSDeviceToken": "\(pushNotificationsToken)",
+        "title": "\(String(localized: "Alert"))",
+        "body": "#NEZHA#"
         }
-        
-        let token = try await getToken()
-        
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "name": name,
-            "url": NMCore.apnsSendAlertURLString,
-            "request_method": 2,
-            "request_type": 1,
-            "request_header": "",
-            "request_body":
-"""
-{
-"iOSDeviceToken": "\(pushNotificationsToken)",
-"title": "\(String(localized: "Alert"))",
-"body": "#NEZHA#"
-}
-""",
-            "skip_check": true
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        return try decodeNezhaDashboardResponse(data: data)
+        """
+
+        return try await send(NezhaDashboardEndpoint(
+            "/api/v1/notification",
+            method: .post,
+            body: [
+                "name": name,
+                "url": NMCore.apnsSendAlertURLString,
+                "request_method": 2,
+                "request_type": 1,
+                "request_header": "",
+                "request_body": requestBody,
+                "skip_check": true
+            ]
+        ))
     }
 }

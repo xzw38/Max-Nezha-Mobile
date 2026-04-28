@@ -9,27 +9,15 @@ import Foundation
 
 extension RequestHandler {
     static func addService(name: String, type: ServiceType, target: String, interval: Int64) async throws -> AddServiceResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/service") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
-        }
-        
-        let token = try await getToken()
-        
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "name": name,
-            "type": type.rawValue,
-            "target": target,
-            "duration": interval
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        return try decodeNezhaDashboardResponse(data: data)
+        try await send(NezhaDashboardEndpoint(
+            "/api/v1/service",
+            method: .post,
+            body: [
+                "name": name,
+                "type": type.rawValue,
+                "target": target,
+                "duration": interval
+            ]
+        ))
     }
 }

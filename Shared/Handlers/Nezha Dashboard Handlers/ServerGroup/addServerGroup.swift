@@ -9,25 +9,13 @@ import Foundation
 
 extension RequestHandler {
     static func addServerGroup(name: String) async throws -> AddServerGroupResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/server-group") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
-        }
-        
-        let token = try await getToken()
-        
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "name": name,
-            "servers": []
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        return try decodeNezhaDashboardResponse(data: data)
+        try await send(NezhaDashboardEndpoint(
+            "/api/v1/server-group",
+            method: .post,
+            body: [
+                "name": name,
+                "servers": []
+            ]
+        ))
     }
 }

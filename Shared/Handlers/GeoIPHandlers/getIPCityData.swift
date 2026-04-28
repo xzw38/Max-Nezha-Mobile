@@ -12,27 +12,22 @@ extension RequestHandler {
         guard let url = URL(string: "https://geoip.hidandelion.com/city?IP=\(IP)&locale=\(locale)") else {
             throw GeoIPError.invalidConfiguration
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        
+
         let (data, _) = try await URLSession.shared.data(for: request)
-        
+
         do {
-            let decoder = JSONDecoder()
-            let response = try decoder.decode(GetIPCityDataResponse.self, from: data)
-            
+            let response = try JSONDecoder().decode(GetIPCityDataResponse.self, from: data)
+
             if response.result != nil {
                 return response
             }
-            
+
             throw GeoIPError.invalidResponse(response.message)
-        } catch let error as GeoIPError {
-            throw error
         } catch let error as DecodingError {
             handleDecodingError(error: error)
-            throw error
-        } catch {
             throw error
         }
     }

@@ -9,24 +9,10 @@ import Foundation
 
 extension RequestHandler {
     static func renameServer(serverID: Int64, to name: String) async throws -> RenameServerResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/server/\(serverID)") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
-        }
-        
-        let token = try await getToken()
-        
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "PATCH"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "name": name
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        return try decodeNezhaDashboardResponse(data: data)
+        try await send(NezhaDashboardEndpoint(
+            "/api/v1/server/\(serverID)",
+            method: .patch,
+            body: ["name": name]
+        ))
     }
 }

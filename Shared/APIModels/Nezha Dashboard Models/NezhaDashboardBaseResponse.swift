@@ -9,3 +9,8 @@ protocol NezhaDashboardBaseResponse {
     var success: Bool? { get }
     var error: String? { get }
 }
+
+struct NezhaDashboardAckResponse: Codable, NezhaDashboardBaseResponse {
+    let success: Bool?
+    let error: String?
+}

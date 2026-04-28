@@ -9,15 +9,9 @@ import Foundation
 
 extension RequestHandler {
     static func getService() async throws -> GetServiceResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/service/list") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
-        }
-        
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "GET"
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        return try decodeNezhaDashboardResponse(data: data)
+        try await send(NezhaDashboardEndpoint(
+            "/api/v1/service/list",
+            auth: .unauthenticated
+        ))
     }
 }

@@ -9,19 +9,9 @@ import Foundation
 
 extension RequestHandler {
     static func getMonitor(serverID: Int64, period: String = "1d") async throws -> GetMonitorResponse {
-        guard let configuration = NMCore.getNezhaDashboardConfiguration(endpoint: "/api/v1/server/\(serverID)/service?period=\(period)") else {
-            throw NezhaDashboardError.invalidDashboardConfiguration
-        }
-
-        var request = URLRequest(url: configuration.url)
-        request.httpMethod = "GET"
-
-        if let token = try? await getToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-
-        return try decodeNezhaDashboardResponse(data: data)
+        try await send(NezhaDashboardEndpoint(
+            "/api/v1/server/\(serverID)/service?period=\(period)",
+            auth: .authenticatedIfAvailable
+        ))
     }
 }
