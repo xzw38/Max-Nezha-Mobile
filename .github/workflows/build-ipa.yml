@@ -36,11 +36,11 @@ jobs:
 
           puts "Removing Watch targets from dependencies..."
           project.targets.each do |target|
-            target.dependencies.each do |dep|
-              dep_name = dep.target&.name
+            target.dependencies.dup.each do |dep|
+              dep_name = dep.target&.name.to_s
               if watch_names.include?(dep_name)
                 puts "Removing dependency #{dep_name} from #{target.name}"
-                target.dependencies.delete(dep)
+                dep.remove_from_project
               end
             end
           end
@@ -51,10 +51,17 @@ jobs:
               next unless phase.respond_to?(:files)
 
               phase.files.dup.each do |build_file|
-                display_name = build_file.display_name rescue ''
-                file_ref_name = build_file.file_ref&.display_name rescue ''
+                display_name = build_file.display_name.to_s
+                file_ref_name = build_file.file_ref&.display_name.to_s
+                file_path = build_file.file_ref&.path.to_s
 
-                if watch_names.any? { |n| display_name.include?(n) || file_ref_name.include?(n) }
+                hit = watch_names.any? do |n|
+                  display_name.include?(n) ||
+                  file_ref_name.include?(n) ||
+                  file_path.include?(n)
+                end
+
+                if hit
                   puts "Removing build file #{display_name} from #{target.name}"
                   phase.remove_build_file(build_file)
                 end
@@ -89,7 +96,7 @@ jobs:
             ]
 
             scheme.build_action.entries.delete_if do |entry|
-              target_name = entry.buildable_references.first&.target_name
+              target_name = entry.buildable_references.first&.target_name.to_s
               if watch_names.include?(target_name)
                 puts "Removing from scheme build: #{target_name}"
                 true
@@ -150,7 +157,11 @@ jobs:
       - name: Locate Products
         if: always()
         run: |
-          find build -name "*.app" -o -name "*.appex"
+          if [ -d build ]; then
+            find build -name "*.app" -o -name "*.appex"
+          else
+            echo "No build directory"
+          fi
 
       - name: Package IPA
         run: |
