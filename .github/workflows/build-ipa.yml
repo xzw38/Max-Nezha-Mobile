@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macos-26 自带 Xcode 26，支持 iOS 26 SDK / SwiftUI 新 API
+    runs-on: macos-26
 
     steps:
       - name: Checkout Repository
@@ -23,8 +24,7 @@ jobs:
       - name: Install xcodeproj gem
         run: sudo gem install xcodeproj --no-document
 
-      # 直接修改 .xcodeproj，把 Watch/Vision/Desktop target
-      # 从主 app 的 dependencies 和 scheme 里彻底断开
+      # 从 xcodeproj 依赖链 + scheme 里彻底移除 Watch/Vision/Desktop target
       - name: Remove Non-iOS Targets from Project
         run: |
           ruby <<'RUBY'
@@ -33,7 +33,6 @@ jobs:
           proj_path = 'Nezha Mobile.xcodeproj'
           project = Xcodeproj::Project.open(proj_path)
 
-          # 要排除的 target 名称（Watch / Vision / Desktop）
           exclude_names = [
             'Nezha Watch',
             'Nezha Watch Widget',
@@ -44,14 +43,12 @@ jobs:
           exclude_targets = project.targets.select { |t| exclude_names.include?(t.name) }
           puts "Targets to exclude: #{exclude_targets.map(&:name)}"
 
-          # 从所有 target 的 dependencies 里移除这些 target
           project.targets.each do |target|
             next if exclude_names.include?(target.name)
-            before = target.dependencies.count
             target.dependencies.delete_if do |dep|
               name = dep.target&.name
               if exclude_names.include?(name)
-                puts "  Removing dependency '#{name}' from target '#{target.name}'"
+                puts "  Removing dependency '#{name}' from '#{target.name}'"
                 true
               else
                 false
@@ -59,7 +56,6 @@ jobs:
             end
           end
 
-          # 从主 app target 的 embed extensions build phase 里移除
           project.targets.each do |target|
             next if exclude_names.include?(target.name)
             target.build_phases.each do |phase|
@@ -67,7 +63,7 @@ jobs:
               phase.files.delete_if do |file|
                 ref_name = file.file_ref&.name || file.file_ref&.path || ''
                 should_remove = exclude_names.any? { |n| ref_name.include?(n) }
-                puts "  Removing embed file '#{ref_name}' from '#{target.name}'" if should_remove
+                puts "  Removing embed '#{ref_name}' from '#{target.name}'" if should_remove
                 should_remove
               end
             end
@@ -76,7 +72,6 @@ jobs:
           project.save
           puts "Project saved."
 
-          # 同时修改 scheme，移除这些 target
           scheme_path = "#{proj_path}/xcshareddata/xcschemes/Nezha Mobile.xcscheme"
           if File.exist?(scheme_path)
             scheme = Xcodeproj::XCScheme.new(scheme_path)
@@ -125,7 +120,7 @@ jobs:
       - name: Locate Built App
         if: always()
         run: |
-          find build/Build/Products -name "*.app" -maxdepth 3 2>/dev/null || true
+          find build/Build/Products -name "*.app" -maxdepth 4 2>/dev/null || true
 
       - name: Package IPA
         run: |
