@@ -1,4 +1,4 @@
-name: Build iOS IPA Only
+name: Build iOS IPA With iPhone Widget
 
 on:
   workflow_dispatch:
@@ -21,36 +21,47 @@ jobs:
         run: |
           sudo gem install xcodeproj
 
-      - name: Remove Watch Targets
+      - name: Remove Watch targets from scheme only
         run: |
           ruby <<'RUBY'
           require 'xcodeproj'
 
-          project_path = 'Nezha Mobile.xcodeproj'
-          project = Xcodeproj::Project.open(project_path)
+          scheme_path = 'Nezha Mobile.xcodeproj/xcshareddata/xcschemes/Nezha Mobile.xcscheme'
 
-          remove_names = [
+          unless File.exist?(scheme_path)
+            puts "Scheme not found at #{scheme_path}"
+            exit 1
+          end
+
+          scheme = Xcodeproj::XCScheme.new(scheme_path)
+
+          watch_names = [
             'Nezha Watch',
             'Nezha Watch Widget'
           ]
 
-          project.targets.each do |target|
-            if remove_names.include?(target.name)
-              puts "Removing target: #{target.name}"
-              target.remove_from_project
+          scheme.build_action.entries.delete_if do |entry|
+            target_name = entry.buildable_references.first&.target_name
+            if watch_names.include?(target_name)
+              puts "Removing from scheme build: #{target_name}"
+              true
+            else
+              false
             end
           end
 
-          project.save
+          scheme.save!
           RUBY
 
       - name: Resolve Swift Packages
         run: |
           xcodebuild \
             -resolvePackageDependencies \
-            -project "Nezha Mobile.xcodeproj"
+            -project "Nezha Mobile.xcodeproj" \
+            -scheme "Nezha Mobile" \
+            -derivedDataPath build
 
-      - name: Show Targets
+      - name: Show Schemes and Targets
         run: |
           xcodebuild -list -project "Nezha Mobile.xcodeproj"
 
@@ -73,12 +84,13 @@ jobs:
             build | tee build.log
 
       - name: Locate App
+        if: always()
         run: |
-          find build -name "*.app"
+          find build -name "*.app" -o -name "*.appex"
 
       - name: Package IPA
         run: |
-          APP_PATH=$(find build -name "Nezha Mobile.app" | head -n 1)
+          APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
 
           echo "APP_PATH=$APP_PATH"
 
@@ -87,7 +99,8 @@ jobs:
             exit 1
           fi
 
-          mkdir Payload
+          rm -rf Payload
+          mkdir -p Payload
           cp -R "$APP_PATH" Payload/
 
           zip -r Nezha-Mobile-unsigned.ipa Payload
