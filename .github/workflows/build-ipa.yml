@@ -1,96 +1,57 @@
-name: Build Nezha Mobile IPA (Unsigned)
+name: Build Unsigned IPA
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
+  workflow_dispatch: # 支持你在 GitHub Actions 页面手动点击运行
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-26  # 使用最新的 macos-26 环境
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Show Xcode Version
-        run: xcodebuild -version
-
-      - name: Resolve Swift Package Dependencies
+      - name: Set up Xcode Version
         run: |
-          xcodebuild \
-            -resolvePackageDependencies \
-            -project "Nezha Mobile.xcodeproj" \
-            -scheme "Nezha Mobile" \
-            -derivedDataPath build
+          # 确保切换到当前的最新正式版 Xcode 26
+          sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer
 
-      - name: Build App (No Code Signing)
+      - name: Cache SPM Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Build and Archive for iOS
         run: |
-          set -o pipefail
-          xcodebuild \
-            -project "Nezha Mobile.xcodeproj" \
+          # 因为是多平台项目，这里显式指定 target 平台为 iOS，并跳过签名限制
+          xcodebuild archive \
+            -workspace "Nezha Mobile.xcworkspace" \
             -scheme "Nezha Mobile" \
+            -destination "generic/platform=iOS" \
             -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+            -archivePath build/NezhaMobile.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            SKIP_INSTALL=NO \
-            build 2>&1 | tee build.log
+            PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Locate Built App
-        if: always()
+      - name: Package App to IPA
         run: |
-          find build/Build/Products -name "*.app" -maxdepth 4 2>/dev/null || true
+          # 创建标准的 IPA 包结构 Payload 目录
+          mkdir -p build/Payload
+          
+          # 将编译生成的 .app 复制到 Payload 文件夹中
+          cp -r build/NezhaMobile.xcarchive/Products/Applications/*.app build/Payload/
+          
+          # 打包为 ipa 格式
+          cd build
+          zip -r Nezha-Mobile-Unsigned.ipa Payload
 
-      - name: Package IPA
-        run: |
-          APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: Nezha Mobile.app not found!"
-            find build -name "*.app" -not -path "*/Intermediates/*" 2>/dev/null || true
-            exit 1
-          fi
-          echo "Packaging: $APP_PATH"
-          rm -rf Payload && mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
-          zip -r Nezha-Mobile-unsigned.ipa Payload/
-          echo "Done: $(du -sh Nezha-Mobile-unsigned.ipa)"
-
-      - name: Upload IPA as Artifact
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nezha-Mobile-unsigned-ipa
-          path: Nezha-Mobile-unsigned.ipa
-          retention-days: 7
-
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          retention-days: 3
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Nezha Mobile ${{ github.ref_name }}"
-          body: |
-            ## Nezha Mobile ${{ github.ref_name }}
-
-            > ⚠️ 这是**未签名 IPA**，需要用侧载工具安装：
-            > - [AltStore](https://altstore.io/) / [Sideloadly](https://sideloadly.io/)（免费 Apple ID，7天重签）
-            > - [TrollStore](https://github.com/opa334/TrollStore)（支持机型）
-            > - 越狱设备直接安装
-          files: Nezha-Mobile-unsigned.ipa
-          draft: false
-          prerelease: false
+          name: Nezha-Mobile-Unsigned-IPA
+          path: build/Nezha-Mobile-Unsigned.ipa
