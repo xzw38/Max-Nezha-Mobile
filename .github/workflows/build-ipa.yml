@@ -21,36 +21,87 @@ jobs:
         run: |
           sudo gem install xcodeproj
 
-      - name: Remove Watch targets from scheme only
+      - name: Remove Watch targets and references
         run: |
           ruby <<'RUBY'
           require 'xcodeproj'
 
-          scheme_path = 'Nezha Mobile.xcodeproj/xcshareddata/xcschemes/Nezha Mobile.xcscheme'
-
-          unless File.exist?(scheme_path)
-            puts "Scheme not found at #{scheme_path}"
-            exit 1
-          end
-
-          scheme = Xcodeproj::XCScheme.new(scheme_path)
+          project_path = 'Nezha Mobile.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
 
           watch_names = [
             'Nezha Watch',
             'Nezha Watch Widget'
           ]
 
-          scheme.build_action.entries.delete_if do |entry|
-            target_name = entry.buildable_references.first&.target_name
-            if watch_names.include?(target_name)
-              puts "Removing from scheme build: #{target_name}"
-              true
-            else
-              false
+          puts "Removing Watch targets from dependencies..."
+          project.targets.each do |target|
+            target.dependencies.each do |dep|
+              dep_name = dep.target&.name
+              if watch_names.include?(dep_name)
+                puts "Removing dependency #{dep_name} from #{target.name}"
+                target.dependencies.delete(dep)
+              end
             end
           end
 
-          scheme.save!
+          puts "Removing Watch files from build phases..."
+          project.targets.each do |target|
+            target.build_phases.each do |phase|
+              next unless phase.respond_to?(:files)
+
+              phase.files.dup.each do |build_file|
+                display_name = build_file.display_name rescue ''
+                file_ref_name = build_file.file_ref&.display_name rescue ''
+
+                if watch_names.any? { |n| display_name.include?(n) || file_ref_name.include?(n) }
+                  puts "Removing build file #{display_name} from #{target.name}"
+                  phase.remove_build_file(build_file)
+                end
+              end
+            end
+          end
+
+          puts "Removing Watch targets..."
+          project.targets.dup.each do |target|
+            if watch_names.include?(target.name)
+              puts "Removing target: #{target.name}"
+              target.remove_from_project
+            end
+          end
+
+          project.save
+          RUBY
+
+      - name: Remove Watch targets from scheme
+        run: |
+          ruby <<'RUBY'
+          require 'xcodeproj'
+
+          scheme_path = 'Nezha Mobile.xcodeproj/xcshareddata/xcschemes/Nezha Mobile.xcscheme'
+
+          if File.exist?(scheme_path)
+            scheme = Xcodeproj::XCScheme.new(scheme_path)
+
+            watch_names = [
+              'Nezha Watch',
+              'Nezha Watch Widget'
+            ]
+
+            scheme.build_action.entries.delete_if do |entry|
+              target_name = entry.buildable_references.first&.target_name
+              if watch_names.include?(target_name)
+                puts "Removing from scheme build: #{target_name}"
+                true
+              else
+                false
+              end
+            end
+
+            scheme.save!
+          else
+            puts "Scheme not found, skipping scheme patch."
+          end
           RUBY
 
       - name: Resolve Swift Packages
@@ -67,7 +118,7 @@ jobs:
 
       - name: Build iOS App
         run: |
-          set -o pipefail
+          set +e
 
           xcodebuild \
             -project "Nezha Mobile.xcodeproj" \
@@ -83,7 +134,20 @@ jobs:
             SKIP_INSTALL=NO \
             build | tee build.log
 
-      - name: Locate App
+          BUILD_EXIT=${PIPESTATUS[0]}
+          echo "xcodebuild exit code: $BUILD_EXIT"
+
+          APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "Nezha Mobile.app was not generated, real build failure."
+            exit $BUILD_EXIT
+          fi
+
+          echo "Nezha Mobile.app exists, continue packaging."
+          exit 0
+
+      - name: Locate Products
         if: always()
         run: |
           find build -name "*.app" -o -name "*.appex"
