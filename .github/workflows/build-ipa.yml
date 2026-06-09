@@ -3,8 +3,11 @@ name: Build Nezha Mobile IPA (Unsigned)
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -20,41 +23,75 @@ jobs:
       - name: Install xcodeproj gem
         run: sudo gem install xcodeproj --no-document
 
-      # 从 scheme 里彻底移除 Watch / Vision / Desktop 相关 target
-      - name: Remove Non-iOS Targets from Scheme
+      # 直接修改 .xcodeproj，把 Watch/Vision/Desktop target
+      # 从主 app 的 dependencies 和 scheme 里彻底断开
+      - name: Remove Non-iOS Targets from Project
         run: |
           ruby <<'RUBY'
           require 'xcodeproj'
 
-          scheme_path = 'Nezha Mobile.xcodeproj/xcshareddata/xcschemes/Nezha Mobile.xcscheme'
-          unless File.exist?(scheme_path)
-            puts "ERROR: Scheme not found at #{scheme_path}"
-            exit 1
-          end
+          proj_path = 'Nezha Mobile.xcodeproj'
+          project = Xcodeproj::Project.open(proj_path)
 
-          scheme = Xcodeproj::XCScheme.new(scheme_path)
-
-          # 排除所有非 iPhone/iPad target
-          exclude_targets = [
+          # 要排除的 target 名称（Watch / Vision / Desktop）
+          exclude_names = [
             'Nezha Watch',
             'Nezha Watch Widget',
             'Nezha Vision',
             'Nezha Desktop',
           ]
 
-          scheme.build_action.entries.delete_if do |entry|
-            name = entry.buildable_references.first&.target_name
-            if exclude_targets.include?(name)
-              puts "Removing: #{name}"
-              true
-            else
-              puts "Keeping:  #{name}"
-              false
+          exclude_targets = project.targets.select { |t| exclude_names.include?(t.name) }
+          puts "Targets to exclude: #{exclude_targets.map(&:name)}"
+
+          # 从所有 target 的 dependencies 里移除这些 target
+          project.targets.each do |target|
+            next if exclude_names.include?(target.name)
+            before = target.dependencies.count
+            target.dependencies.delete_if do |dep|
+              name = dep.target&.name
+              if exclude_names.include?(name)
+                puts "  Removing dependency '#{name}' from target '#{target.name}'"
+                true
+              else
+                false
+              end
             end
           end
 
-          scheme.save!
-          puts "Done."
+          # 从主 app target 的 embed extensions build phase 里移除
+          project.targets.each do |target|
+            next if exclude_names.include?(target.name)
+            target.build_phases.each do |phase|
+              next unless phase.respond_to?(:files)
+              phase.files.delete_if do |file|
+                ref_name = file.file_ref&.name || file.file_ref&.path || ''
+                should_remove = exclude_names.any? { |n| ref_name.include?(n) }
+                puts "  Removing embed file '#{ref_name}' from '#{target.name}'" if should_remove
+                should_remove
+              end
+            end
+          end
+
+          project.save
+          puts "Project saved."
+
+          # 同时修改 scheme，移除这些 target
+          scheme_path = "#{proj_path}/xcshareddata/xcschemes/Nezha Mobile.xcscheme"
+          if File.exist?(scheme_path)
+            scheme = Xcodeproj::XCScheme.new(scheme_path)
+            scheme.build_action.entries.delete_if do |entry|
+              name = entry.buildable_references.first&.target_name
+              if exclude_names.include?(name)
+                puts "Removing from scheme: #{name}"
+                true
+              else
+                false
+              end
+            end
+            scheme.save!
+            puts "Scheme saved."
+          end
           RUBY
 
       - name: Resolve Swift Package Dependencies
@@ -65,11 +102,9 @@ jobs:
             -scheme "Nezha Mobile" \
             -derivedDataPath build
 
-      - name: List Schemes and Targets
+      - name: List Targets
         run: xcodebuild -list -project "Nezha Mobile.xcodeproj"
 
-      # 编译时额外用 EXCLUDED_SOURCE_FILE_NAMES 跳过 Watch target 的源码
-      # 并且显式禁用签名
       - name: Build App (No Code Signing)
         run: |
           set -o pipefail
@@ -85,33 +120,28 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             SKIP_INSTALL=NO \
-            WATCHOS_DEPLOYMENT_TARGET="" \
             build 2>&1 | tee build.log
 
       - name: Locate Built App
         if: always()
         run: |
-          echo "=== .app files ==="
           find build/Build/Products -name "*.app" -maxdepth 3 2>/dev/null || true
 
       - name: Package IPA
         run: |
           APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
-
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: Nezha Mobile.app not found!"
             find build -name "*.app" -not -path "*/Intermediates/*" 2>/dev/null || true
             exit 1
           fi
-
           echo "Packaging: $APP_PATH"
-          rm -rf Payload
-          mkdir -p Payload
+          rm -rf Payload && mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -r Nezha-Mobile-unsigned.ipa Payload/
           echo "Done: $(du -sh Nezha-Mobile-unsigned.ipa)"
 
-      - name: Upload IPA
+      - name: Upload IPA as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nezha-Mobile-unsigned-ipa
@@ -125,3 +155,19 @@ jobs:
           name: build-log
           path: build.log
           retention-days: 3
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Nezha Mobile ${{ github.ref_name }}"
+          body: |
+            ## Nezha Mobile ${{ github.ref_name }}
+
+            > ⚠️ 这是**未签名 IPA**，需要用侧载工具安装：
+            > - [AltStore](https://altstore.io/) / [Sideloadly](https://sideloadly.io/)（免费 Apple ID，7天重签）
+            > - [TrollStore](https://github.com/opa334/TrollStore)（支持机型）
+            > - 越狱设备直接安装
+          files: Nezha-Mobile-unsigned.ipa
+          draft: false
+          prerelease: false
