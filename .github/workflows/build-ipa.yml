@@ -1,9 +1,7 @@
 name: Build Nezha Mobile IPA (Unsigned)
 
 on:
-  # 手动触发
   workflow_dispatch:
-  # 也可以在 push 到 main 时自动触发，不需要可以删掉这几行
   push:
     branches:
       - main
@@ -13,27 +11,22 @@ jobs:
     runs-on: macos-15
 
     steps:
-      # 1. 拉取代码
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. 确认 Xcode 版本（macos-15 默认是 Xcode 16）
       - name: Show Xcode Version
         run: xcodebuild -version
 
-      # 3. 安装 xcodeproj gem（用于脚本修改 scheme）
       - name: Install xcodeproj gem
         run: sudo gem install xcodeproj --no-document
 
-      # 4. 从 scheme 里移除 Apple Watch target
-      #    （Watch target 在没有 watchOS SDK 授权时会导致编译失败）
-      - name: Remove Watch Targets from Scheme
+      # 从 scheme 里彻底移除 Watch / Vision / Desktop 相关 target
+      - name: Remove Non-iOS Targets from Scheme
         run: |
           ruby <<'RUBY'
           require 'xcodeproj'
 
           scheme_path = 'Nezha Mobile.xcodeproj/xcshareddata/xcschemes/Nezha Mobile.xcscheme'
-
           unless File.exist?(scheme_path)
             puts "ERROR: Scheme not found at #{scheme_path}"
             exit 1
@@ -41,27 +34,29 @@ jobs:
 
           scheme = Xcodeproj::XCScheme.new(scheme_path)
 
-          # 需要从 scheme 中排除的 target 名称
+          # 排除所有非 iPhone/iPad target
           exclude_targets = [
             'Nezha Watch',
             'Nezha Watch Widget',
+            'Nezha Vision',
+            'Nezha Desktop',
           ]
 
           scheme.build_action.entries.delete_if do |entry|
             name = entry.buildable_references.first&.target_name
             if exclude_targets.include?(name)
-              puts "Removing target from scheme: #{name}"
+              puts "Removing: #{name}"
               true
             else
+              puts "Keeping:  #{name}"
               false
             end
           end
 
           scheme.save!
-          puts "Scheme saved successfully."
+          puts "Done."
           RUBY
 
-      # 5. 解析 Swift Package 依赖
       - name: Resolve Swift Package Dependencies
         run: |
           xcodebuild \
@@ -70,11 +65,11 @@ jobs:
             -scheme "Nezha Mobile" \
             -derivedDataPath build
 
-      # 6. 列出所有 scheme/target（方便调试，不影响编译）
       - name: List Schemes and Targets
         run: xcodebuild -list -project "Nezha Mobile.xcodeproj"
 
-      # 7. 编译（不签名）
+      # 编译时额外用 EXCLUDED_SOURCE_FILE_NAMES 跳过 Watch target 的源码
+      # 并且显式禁用签名
       - name: Build App (No Code Signing)
         run: |
           set -o pipefail
@@ -90,47 +85,39 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             SKIP_INSTALL=NO \
+            WATCHOS_DEPLOYMENT_TARGET="" \
             build 2>&1 | tee build.log
 
-      # 8. 打印找到的 .app 文件（方便确认路径）
       - name: Locate Built App
         if: always()
         run: |
-          echo "=== All .app files ==="
-          find build -name "*.app" -not -path "*/Intermediates/*" | head -20
-          echo "=== All .appex files ==="
-          find build -name "*.appex" | head -20
+          echo "=== .app files ==="
+          find build/Build/Products -name "*.app" -maxdepth 3 2>/dev/null || true
 
-      # 9. 打包成 .ipa
       - name: Package IPA
         run: |
           APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: Nezha Mobile.app not found under build/Build/Products/Release-iphoneos/"
-            echo "Available .app files:"
-            find build -name "*.app" -not -path "*/Intermediates/*"
+            echo "ERROR: Nezha Mobile.app not found!"
+            find build -name "*.app" -not -path "*/Intermediates/*" 2>/dev/null || true
             exit 1
           fi
 
-          echo "Found app at: $APP_PATH"
-
+          echo "Packaging: $APP_PATH"
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-
           zip -r Nezha-Mobile-unsigned.ipa Payload/
-          echo "IPA created: $(du -sh Nezha-Mobile-unsigned.ipa)"
+          echo "Done: $(du -sh Nezha-Mobile-unsigned.ipa)"
 
-      # 10. 上传 IPA 为 artifact（保留 7 天）
-      - name: Upload IPA Artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: Nezha-Mobile-unsigned-ipa
           path: Nezha-Mobile-unsigned.ipa
           retention-days: 7
 
-      # 11. 上传编译日志（无论成功失败都上传，方便排查）
       - name: Upload Build Log
         if: always()
         uses: actions/upload-artifact@v4
