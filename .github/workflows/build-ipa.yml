@@ -11,7 +11,8 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Show Xcode
         run: xcodebuild -version
@@ -21,18 +22,20 @@ jobs:
           xcodebuild -resolvePackageDependencies \
             -project "Nezha Mobile.xcodeproj"
 
-      - name: Show targets
+      - name: Show schemes and targets
         run: |
           xcodebuild -list -project "Nezha Mobile.xcodeproj"
 
-      - name: Build iPhone app only
+      - name: Build iOS app
         run: |
           xcodebuild \
             -project "Nezha Mobile.xcodeproj" \
-            -target "Nezha Mobile" \
+            -scheme "Nezha Mobile" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            SKIP_INSTALL=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -41,8 +44,9 @@ jobs:
 
       - name: Package IPA
         run: |
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -path "*/Build/Products/Release-iphoneos/*.app" -name "Nezha Mobile.app" | head -n 1)
-          echo "$APP_PATH"
+          APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/*.app" -name "Nezha Mobile.app" | head -n 1)
+          echo "APP_PATH=$APP_PATH"
+          test -n "$APP_PATH"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -r Nezha-Mobile-unsigned.ipa Payload
