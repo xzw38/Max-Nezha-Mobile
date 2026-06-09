@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build:
+    # macos-26 自带 Xcode 26，支持 iOS 26 SDK / SwiftUI 新 API
     runs-on: macos-26
 
     steps:
@@ -20,6 +21,66 @@ jobs:
       - name: Show Xcode Version
         run: xcodebuild -version
 
+      - name: Install xcodeproj gem
+        run: sudo gem install xcodeproj --no-document
+
+      # 从 xcodeproj 依赖链 + scheme 里彻底移除 Watch/Vision/Desktop target
+      - name: Remove Non-iOS Targets from Project
+        run: |
+          ruby <<'RUBY'
+          require 'xcodeproj'
+          proj_path = 'Nezha Mobile.xcodeproj'
+          project = Xcodeproj::Project.open(proj_path)
+          exclude_names = [
+            'Nezha Watch',
+            'Nezha Watch Widget',
+            'Nezha Vision',
+            'Nezha Desktop',
+          ]
+          exclude_targets = project.targets.select { |t| exclude_names.include?(t.name) }
+          puts "Targets to exclude: #{exclude_targets.map(&:name)}"
+          project.targets.each do |target|
+            next if exclude_names.include?(target.name)
+            target.dependencies.delete_if do |dep|
+              name = dep.target&.name
+              if exclude_names.include?(name)
+                puts "  Removing dependency '#{name}' from '#{target.name}'"
+                true
+              else
+                false
+              end
+            end
+          end
+          project.targets.each do |target|
+            next if exclude_names.include?(target.name)
+            target.build_phases.each do |phase|
+              next unless phase.respond_to?(:files)
+              phase.files.delete_if do |file|
+                ref_name = file.file_ref&.name || file.file_ref&.path || ''
+                should_remove = exclude_names.any? { |n| ref_name.include?(n) }
+                puts "  Removing embed '#{ref_name}' from '#{target.name}'" if should_remove
+                should_remove
+              end
+            end
+          end
+          project.save
+          puts "Project saved."
+          scheme_path = "#{proj_path}/xcshareddata/xcschemes/Nezha Mobile.xcscheme"
+          if File.exist?(scheme_path)
+            scheme = Xcodeproj::XCScheme.new(scheme_path)
+            scheme.build_action.entries.delete_if do |entry|
+              name = entry.buildable_references.first&.target_name
+              if exclude_names.include?(name)
+                puts "Removing from scheme: #{name}"
+                true
+              else
+                false
+              end
+            end
+            scheme.save!
+            puts "Scheme saved."
+          end
+          RUBY
       - name: Resolve Swift Package Dependencies
         run: |
           xcodebuild \
@@ -27,6 +88,8 @@ jobs:
             -project "Nezha Mobile.xcodeproj" \
             -scheme "Nezha Mobile" \
             -derivedDataPath build
+      - name: List Targets
+        run: xcodebuild -list -project "Nezha Mobile.xcodeproj"
 
       - name: Build App (No Code Signing)
         run: |
@@ -44,12 +107,10 @@ jobs:
             DEVELOPMENT_TEAM="" \
             SKIP_INSTALL=NO \
             build 2>&1 | tee build.log
-
       - name: Locate Built App
         if: always()
         run: |
           find build/Build/Products -name "*.app" -maxdepth 4 2>/dev/null || true
-
       - name: Package IPA
         run: |
           APP_PATH=$(find build -path "*/Build/Products/Release-iphoneos/Nezha Mobile.app" | head -n 1)
@@ -63,7 +124,6 @@ jobs:
           cp -R "$APP_PATH" Payload/
           zip -r Nezha-Mobile-unsigned.ipa Payload/
           echo "Done: $(du -sh Nezha-Mobile-unsigned.ipa)"
-
       - name: Upload IPA as Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +146,6 @@ jobs:
           name: "Nezha Mobile ${{ github.ref_name }}"
           body: |
             ## Nezha Mobile ${{ github.ref_name }}
-
             > ⚠️ 这是**未签名 IPA**，需要用侧载工具安装：
             > - [AltStore](https://altstore.io/) / [Sideloadly](https://sideloadly.io/)（免费 Apple ID，7天重签）
             > - [TrollStore](https://github.com/opa334/TrollStore)（支持机型）
